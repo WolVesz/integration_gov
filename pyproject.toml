@@ -1,0 +1,58 @@
+[project]
+name = "integration-gov"
+version = "2.0.0"
+description = "Integration metadata catalog and development planning for Databricks Apps"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi>=0.110", "uvicorn[standard]>=0.29", "sqlalchemy>=2.0.30",
+  "pydantic>=2.7", "pydantic-settings>=2.2", "python-multipart>=0.0.9",
+  "httpx>=0.27", "databricks-sdk>=0.38", "psycopg2-binary>=2.9",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.2", "pytest-cov>=7", "ruff>=0.14", "pyright>=1.1",
+  "poethepoet>=0.37", "bandit[toml]>=1.8", "yamllint>=1.37", "pre-commit>=4",
+]
+
+[tool.uv]
+package = false
+required-version = "==0.13.5"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S105", "S106", "S107"]
+ignore = ["E501", "B008"]
+
+[tool.pyright]
+include = ["backend", "scripts"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+
+[tool.bandit]
+exclude_dirs = ["backend/tests", "scripts/tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["backend", "scripts"]
+omit = ["*/tests/*"]
+
+[tool.poe.tasks]
+format = "ruff format backend scripts"
+format-check = "ruff format --check backend scripts"
+lint-python = "ruff check backend scripts"
+lint-yaml = "yamllint .github app.yaml .pre-commit-config.yaml .yamllint.yaml"
+lint = ["lint-python", "lint-yaml"]
+types = "pyright"
+lock = "uv lock --check"
+exports = "python scripts/check_dependencies.py"
+export-deps = "python scripts/check_dependencies.py --write"
+test = "pytest backend/tests scripts/tests --cov --cov-report=term-missing -q"
+frontend-tests = { cmd = "npm run test:branding", cwd = "frontend" }
+frontend-build = { cmd = "npm run build", cwd = "frontend" }
+browser-tests = { cmd = "npm run test:e2e", cwd = "frontend" }
+security = "bandit -c pyproject.toml -r backend scripts"
+checks = ["lock", "exports", "lint", "format-check", "types", "security", "test", "frontend-tests", "frontend-build", "browser-tests"]

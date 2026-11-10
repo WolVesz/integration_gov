@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+*.db
+.env
+node_modules/
+frontend/dist/
+.pytest_cache/
+
+
+frontend/test-results/
+frontend/playwright-report/
+.env.local
+.env.*.local
+.coverage
+htmlcov/
+.ruff_cache/

@@ -1,0 +1,121 @@
+name: Verify application and release bundle
+on:
+  push:
+    branches: [main, clean/neutral-integration-gov]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      DEV_MODE: 'true'
+      DATABASE_URL: sqlite:////tmp/integration-gov-ci.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.5'
+      - run: uv sync --locked --dev --python ${{ matrix.python-version }}
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: uv run --locked poe checks
+      - name: Verify custom identity and missing logo
+        working-directory: frontend
+        env:
+          VITE_APP_NAME: Example Integration Catalog
+          VITE_ORGANIZATION_NAME: Example Organization
+          VITE_LOGO_PATH: /missing-example-logo.svg
+          VITE_PRIMARY_COLOR: '#1e40af'
+        run: |
+          npm run build
+          npm run test:e2e -- e2e/branding.spec.ts --output test-results/custom-branding
+      - name: Restore neutral frontend for packaging
+        run: npm run build
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence-python-${{ matrix.python-version }}
+          path: frontend/test-results/
+          retention-days: 7
+      - name: Verify explicit migration and production guard
+        run: |
+          uv run --locked python -c 'from backend.database import engine; from backend.models import Base; from scripts.db_checks import FRAMEWORK_TABLES; Base.metadata.create_all(engine, tables=[t for n,t in Base.metadata.tables.items() if n not in FRAMEWORK_TABLES])'
+          uv run --locked python -m scripts.migrate_framework --expected-database /tmp/integration-gov-ci.db --expected-schema main
+          uv run --locked python -m scripts.migrate_framework --expected-database /tmp/integration-gov-ci.db --expected-schema main --apply
+          uv run --locked python -m scripts.migrate_framework --expected-database /tmp/integration-gov-ci.db --expected-schema main --apply
+          uv run --locked python -m scripts.preflight --expected-database /tmp/integration-gov-ci.db --expected-schema main
+          if uv run --locked python -m scripts.preflight --expected-database /tmp/integration-gov-ci.db --expected-schema main --production; then exit 1; fi
+      - name: Package deterministically with built frontend
+        run: |
+          uv run --locked python -m scripts.package_release --output /tmp/integration-gov-release.tar
+          uv run --locked python -m scripts.package_release --output /tmp/integration-gov-release-repeat.tar
+          cmp /tmp/integration-gov-release.tar /tmp/integration-gov-release-repeat.tar
+          tar tf /tmp/integration-gov-release.tar | grep '^frontend/dist/index.html$'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: integration-gov-python-${{ matrix.python-version }}
+          path: /tmp/integration-gov-release.tar
+          retention-days: 14
+  postgres-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: catalog_ci
+          POSTGRES_PASSWORD: ci-only-not-production
+          POSTGRES_DB: catalog_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U catalog_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      UV_PYTHON: '3.11'
+      DEV_MODE: 'false'
+      DATABASE_URL: postgresql+psycopg2://catalog_ci:ci-only-not-production@localhost:5432/catalog_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.5'
+      - run: uv sync --locked --no-dev --python 3.11
+      - name: Bootstrap an isolated PostgreSQL schema, then verify additive no-op
+        run: |
+          uv run --locked python -m scripts.bootstrap_database --production --expected-database catalog_ci --expected-schema public
+          uv run --locked python -m scripts.bootstrap_database --production --expected-database catalog_ci --expected-schema public --apply
+          if uv run --locked python -m scripts.bootstrap_database --production --expected-database catalog_ci --expected-schema public --apply; then exit 1; fi
+          uv run --locked python -m scripts.migrate_framework --production --expected-database catalog_ci --expected-schema public --apply
+          uv run --locked python -c 'from backend.database import engine; from backend.models import Base; from scripts.db_checks import schema_problems; c = engine.connect(); assert not schema_problems(c, Base.metadata, Base.metadata.tables); c.close()'
+  runtime-install:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --require-hashes -r requirements.txt
+      - run: python -c 'import backend.main, databricks.sdk, psycopg2, uvicorn'

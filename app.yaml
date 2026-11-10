@@ -1,0 +1,25 @@
+# Databricks Apps injects UVICORN_HOST and UVICORN_PORT.
+# This file deliberately contains no workspace, app name, database, or secrets.
+command: ["uvicorn", "backend.main:app"]
+
+env:
+  - name: "DEV_MODE"
+    value: "false"
+  - name: "PYTHONDONTWRITEBYTECODE"
+    value: "1"
+  - name: "APP_NAME"
+    value: "Integration Governance"
+
+  # Set ADMIN_GROUPS to verified groups assigned to the target workspace.
+  # Do not assume the local-development example is a production group.
+  # - name: "ADMIN_GROUPS"
+  #   value: "<verified-admin-group>"
+
+  # Attach the existing approved Lakebase database resource and configure its
+  # actual instance name. PGHOST/PGPORT/PGUSER/PGDATABASE come from that resource.
+  # - name: "LAKEBASE_INSTANCE_NAME"
+  #   value: "<approved-existing-instance>"
+
+  # Optional: attach an approved serving endpoint with Can query permission.
+  # - name: "EMBEDDING_ENDPOINT"
+  #   valueFrom: "serving-endpoint"
